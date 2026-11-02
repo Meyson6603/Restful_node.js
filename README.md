@@ -44,9 +44,19 @@ CREATE TABLE users (
     email VARCHAR(255) NOT NULL UNIQUE,
     password TEXT NOT NULL
 );
+
+CREATE TABLE follows (
+    follower_id INTEGER NOT NULL REFERENCES users(id),
+    following_id INTEGER NOT NULL REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (follower_id, following_id),
+    CHECK (follower_id <> following_id)
+);
 ```
 
-A conexão está configurada diretamente em `controllers/controllers.js` e `controllers/authControllers.js`. Ajuste os campos do objeto `Pool` nos dois arquivos conforme seu PostgreSQL local:
+A tabela `follows` registra quem segue quem. A chave primária composta impede relações duplicadas, e o `CHECK` impede seguir a si mesmo. Execute a criação dessa tabela se já tiver as demais. As referências atuais não usam `ON DELETE CASCADE`: relações existentes impedem excluir o usuário até que os follows dele sejam removidos.
+
+A conexão está configurada diretamente em `controllers/controllers.js`, `controllers/authControllers.js` e `controllers/follow.js`. Ajuste os campos do objeto `Pool` nos três arquivos conforme seu PostgreSQL local:
 
 | Campo | Configuração atual |
 | --- | --- |
@@ -136,18 +146,57 @@ O cadastro retorna os dados do usuário sem a senha. O login retorna o nome e gr
 4. Acesse `GET /users/perfil` para consultar o perfil autenticado.
 5. Use `POST /users/logout` para encerrar a sessão no cliente, ou `POST /users/delete` para excluir a conta autenticada.
 
+### Follows e consulta com JOIN
+
+As duas rotas abaixo exigem o cookie `token` recebido no login e não precisam de corpo JSON.
+
+| Método atual | Rota | Comportamento |
+| --- | --- | --- |
+| GET | `/follow/:id` | Faz o usuário autenticado seguir a pessoa de ID `:id` |
+| GET | `/follow/:id/following` | Lista as pessoas que o usuário autenticado segue |
+
+Exemplo: com Clodoaldo (ID 5) autenticado, `GET /follow/1` cria a relação `(5, 1)`, fazendo ele seguir Sarah. Depois, `GET /follow/5/following` retorna:
+
+```json
+[
+  { "id": 1, "name": "sarah" }
+]
+```
+
+Na implementação atual de `getFollowing`, o ID consultado vem de `req.user.id`, e não de `req.params.id`. Portanto, trocar o ID na URL não muda a pessoa consultada. Se não houver relações, a resposta é `[]`.
+
+A consulta usa os seguintes conceitos:
+
+```sql
+SELECT u.id, u.name
+FROM follows AS f
+JOIN users AS u ON u.id = f.following_id
+WHERE f.follower_id = $1
+ORDER BY u.id;
+```
+
+- `f` e `u` são apelidos de `follows` e `users`.
+- O `ON` conecta o ID da pessoa seguida ao cadastro em `users`.
+- O `WHERE` filtra as relações de quem está seguindo.
+- No controller, `$1` recebe o ID autenticado pelo array de parâmetros de `pool.query`.
+- O `SELECT` retorna somente o ID e o nome das pessoas seguidas.
+
+A criação do follow ainda utiliza GET; uma melhoria pendente é trocar essa ação para POST. Listagem de seguidores e unfollow ainda não foram implementados.
+
 ## Estrutura
 
 ```text
 Treino/
 ├── controllers/
 │   ├── authControllers.js   # Usuários, login, perfil e exclusão de conta
-│   └── controllers.js       # CRUD de clientes
+│   ├── controllers.js       # CRUD de clientes
+│   └── follow.js            # Criação de follows e consulta com JOIN
 ├── middleware/
 │   └── authMiddleware.js    # Validação do JWT recebido por cookie
 ├── router/
 │   ├── authRouter.js        # Rotas de usuários
-│   └── router.js            # Rotas de clientes
+│   ├── router.js            # Rotas de clientes
+│   └── follows.js           # Rotas de follows
 ├── .gitignore
 ├── index.js                # Configuração e inicialização do Express
 ├── package-lock.json
