@@ -8,8 +8,10 @@ app.use(bodyParser.json());
 app.use(cookieParser());
 const routerClient = require('./router/router.js')
 const routerUsers = require('./router/authRouter.js')
+const routerFollow = require('./router/follows.js')
 app.use('/client', routerClient)
 app.use('/users', routerUsers)
+app.use('/follow', routerFollow)
 
 
 app.listen(port, () => {
