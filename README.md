@@ -1,6 +1,6 @@
-# Treino — API de clientes e usuários
+# Treino — API e frontend de autenticação
 
-Projeto de estudo de uma API HTTP com Node.js, Express e PostgreSQL. Implementa cadastro, consulta, atualização e exclusão de clientes, além de cadastro e autenticação de usuários com JWT em cookie.
+Projeto de estudo com API em Node.js, Express e PostgreSQL e um frontend em Next.js e React. A API implementa CRUD de clientes, autenticação de usuários com JWT em cookie e relações de follow com consultas usando JOIN. O frontend possui um formulário de login, com a integração de autenticação ainda em desenvolvimento.
 
 ## Tecnologias
 
@@ -10,6 +10,8 @@ Projeto de estudo de uma API HTTP com Node.js, Express e PostgreSQL. Implementa 
 - `jsonwebtoken` para gerar e validar tokens JWT
 - `cookie-parser` para ler cookies
 - Nodemon para desenvolvimento
+- `cors` para permitir requisições do frontend local
+- Next.js, React e Tailwind CSS no frontend
 
 ## Como executar
 
@@ -54,7 +56,7 @@ CREATE TABLE follows (
 );
 ```
 
-A tabela `follows` registra quem segue quem. A chave primária composta impede relações duplicadas, e o `CHECK` impede seguir a si mesmo. Execute a criação dessa tabela se já tiver as demais. As referências atuais não usam `ON DELETE CASCADE`: relações existentes impedem excluir o usuário até que os follows dele sejam removidos.
+A tabela `follows` registra quem segue quem. A chave primária composta impede relações duplicadas, e o `CHECK` impede seguir a si mesmo. Execute a criação dessa tabela se já tiver as demais. As referências atuais não usam `ON DELETE CASCADE`. A rota de exclusão de conta remove primeiro as relações de follow e depois o usuário, manualmente.
 
 A conexão está configurada diretamente em `controllers/controllers.js`, `controllers/authControllers.js` e `controllers/follow.js`. Ajuste os campos do objeto `Pool` nos três arquivos conforme seu PostgreSQL local:
 
@@ -81,6 +83,29 @@ npx nodemon index.js
 ```
 
 URL base: `http://localhost:3000`.
+
+### 4. Iniciar o frontend
+
+Mantenha a API rodando e abra outro terminal na raiz do projeto:
+
+```bash
+cd treino_react
+npm install
+npm run dev -- --port 3001
+```
+
+Acesse `http://localhost:3001`. A API permite essa origem no CORS, com suporte a credenciais. A porta 3000 fica reservada para o Express.
+
+O formulário envia e-mail e senha para `http://localhost:3000/users/login`. A integração ainda precisa de ajustes: o frontend usa `credentials: 'omit'`, que impede o uso do cookie nessa chamada, e tenta interpretar a resposta como JSON, enquanto a API retorna o nome como texto. Para testar o fluxo completo de autenticação atual, use Postman ou Insomnia.
+
+Na pasta `treino_react`, os scripts disponíveis são:
+
+| Comando | Finalidade |
+| --- | --- |
+| `npm run dev -- --port 3001` | Inicia o frontend em desenvolvimento |
+| `npm run lint` | Executa o ESLint |
+| `npm run build` | Gera o build de produção |
+| `npm run start -- --port 3001` | Serve o build gerado |
 
 ## Rotas
 
@@ -115,7 +140,8 @@ Corpo para cadastro e atualização:
 | POST | `/users/login` | Autentica e define o cookie `token` | Não |
 | GET | `/users/perfil` | Consulta o perfil do usuário autenticado | Sim |
 | POST | `/users/logout` | Remove o cookie `token` | Não |
-| POST | `/users/delete` | Exclui a conta do usuário autenticado | Sim |
+| PUT | `/users/update` | Rota em desenvolvimento; ainda não atualiza o banco | Sim |
+| DELETE | `/users/delete` | Remove follows, exclui a conta e limpa o cookie | Sim |
 
 Corpo para cadastro em `/users/register`:
 
@@ -144,7 +170,9 @@ O cadastro retorna os dados do usuário sem a senha. O login retorna o nome e gr
 2. Faça login com `POST /users/login`.
 3. Mantenha o armazenamento de cookies habilitado e use o mesmo host nas requisições.
 4. Acesse `GET /users/perfil` para consultar o perfil autenticado.
-5. Use `POST /users/logout` para encerrar a sessão no cliente, ou `POST /users/delete` para excluir a conta autenticada.
+5. Use `POST /follow/:id` com o ID de outro usuário existente para segui-lo.
+6. Consulte `GET /follow/following` para listar quem você segue.
+7. Use `POST /users/logout` para encerrar a sessão no cliente, ou `DELETE /users/delete` para excluir a conta autenticada e suas relações de follow.
 
 ### Follows e consulta com JOIN
 
@@ -152,10 +180,10 @@ As duas rotas abaixo exigem o cookie `token` recebido no login e não precisam d
 
 | Método atual | Rota | Comportamento |
 | --- | --- | --- |
-| GET | `/follow/:id` | Faz o usuário autenticado seguir a pessoa de ID `:id` |
-| GET | `/follow/:id/following` | Lista as pessoas que o usuário autenticado segue |
+| POST | `/follow/:id` | Faz o usuário autenticado seguir a pessoa de ID `:id` |
+| GET | `/follow/following` | Lista as pessoas que o usuário autenticado segue |
 
-Exemplo: com Clodoaldo (ID 5) autenticado, `GET /follow/1` cria a relação `(5, 1)`, fazendo ele seguir Sarah. Depois, `GET /follow/5/following` retorna:
+Exemplo: com Clodoaldo (ID 5) autenticado e Sarah (ID 1) cadastrada, `POST /follow/1` cria a relação `(5, 1)`. Depois, `GET /follow/following` retorna:
 
 ```json
 [
@@ -163,7 +191,7 @@ Exemplo: com Clodoaldo (ID 5) autenticado, `GET /follow/1` cria a relação `(5,
 ]
 ```
 
-Na implementação atual de `getFollowing`, o ID consultado vem de `req.user.id`, e não de `req.params.id`. Portanto, trocar o ID na URL não muda a pessoa consultada. Se não houver relações, a resposta é `[]`.
+Na implementação atual de `getFollowing`, o ID consultado vem de `req.user.id`, preenchido pelo middleware a partir do JWT. A listagem não recebe ID na URL. Se não houver relações, a resposta é `[]`.
 
 A consulta usa os seguintes conceitos:
 
@@ -181,7 +209,7 @@ ORDER BY u.id;
 - No controller, `$1` recebe o ID autenticado pelo array de parâmetros de `pool.query`.
 - O `SELECT` retorna somente o ID e o nome das pessoas seguidas.
 
-A criação do follow ainda utiliza GET; uma melhoria pendente é trocar essa ação para POST. Listagem de seguidores e unfollow ainda não foram implementados.
+A criação do follow utiliza POST, e a consulta utiliza GET. Listagem de seguidores e unfollow ainda não foram implementados.
 
 ## Estrutura
 
@@ -197,6 +225,11 @@ Treino/
 │   ├── authRouter.js        # Rotas de usuários
 │   ├── router.js            # Rotas de clientes
 │   └── follows.js           # Rotas de follows
+├── treino_react/            # Frontend Next.js, com dependências próprias
+│   ├── src/app/page.js      # Formulário de login
+│   ├── src/app/layout.js   # Layout da aplicação
+│   ├── src/app/globals.css # Estilos globais
+│   └── package.json        # Scripts e dependências do frontend
 ├── .gitignore
 ├── index.js                # Configuração e inicialização do Express
 ├── package-lock.json
@@ -213,6 +246,10 @@ Pontos conhecidos no código atual:
 - As rotas de clientes e as consultas públicas de usuários não exigem autenticação.
 - O login de um e-mail inexistente pode retornar erro 500 devido à verificação de `user.rows[0].length`.
 - A atualização de um cliente inexistente precisa corrigir a chamada `res.send(404).status(...)`.
+- A atualização de conta ainda não executa um UPDATE; o controller contém apenas uma tentativa de resposta com `res.send(id, data)`.
+- A exclusão de conta usa duas consultas separadas, ainda sem transação para garantir que ambas sejam concluídas juntas.
+- O follow ainda precisa tratar erros de relação duplicada, ID inexistente e entradas inválidas de forma consistente.
+- O login do frontend ainda precisa alinhar cookies e formato da resposta com a API.
 
 ## Licença
 
