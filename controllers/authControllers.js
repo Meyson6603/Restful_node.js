@@ -124,20 +124,41 @@ async function logoutUser(req, res) {
     }
 }
 
+async function alterAccount(req, res) {
+    const id = +req.user.id;
+    const data = req.body;
+
+    res.send(id, data)
+}
+
 async function deleteAccount(req, res) {
 
-    const id = +req.user.id
-    
+    const userId = +req.user.id;
+
     try {
-        const result = await pool.query(`DELETE FROM users WHERE id=$1`, [id])
+        // 1. O jeito fácil: limpa os rastros primeiro! 
+        // Apaga tudo onde ele segue alguém ou é seguido por alguém
+        await pool.query(
+            `DELETE FROM follows WHERE follower_id = $1 OR following_id = $1`, 
+            [userId]
+        );
+
+        // 2. Agora o banco de dados está livre e deixa apagar o usuário tranquilamente
+        const result = await pool.query(
+            `DELETE FROM users WHERE id=$1`, 
+            [userId]
+        );
+
         if(result.rowCount === 0){
-            return res.status(404).send({"Error:" : "Account not found"})
+            return res.status(404).send({"Error": "Conta não encontrada"});
         }
 
-        res.send("Conta deletada com sucesso")
-
-    } catch (error) {
+        // 3. Apaga o cookie (crachá) para o utilizador ser deslogado na hora
+        res.clearCookie('token');
+        
+        res.send({ message: "Conta e seguidores deletados com sucesso!" });
+    }catch(error){
         res.status(500).send({ "Error": "Database not connect" });
     }
 }
-module.exports = {getAllUsers, getAUser, getPerfil, registerUser, loginUser, logoutUser, deleteAccount}
+module.exports = {getAllUsers, getAUser, getPerfil, registerUser, loginUser, logoutUser, alterAccount, deleteAccount}
