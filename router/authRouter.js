@@ -9,7 +9,8 @@ router.get('/:id', controller.getAUser)
 router.post('/register', controller.registerUser)
 router.post('/login', controller.loginUser)
 router.post('/logout', controller.logoutUser)
-router.post('/delete', verify.verifyToken, controller.deleteAccount)
+router.put('/update' , verify.verifyToken, controller.alterAccount)
+router.delete('/delete', verify.verifyToken, controller.deleteAccount)
 
 
 module.exports = router
